@@ -1,6 +1,9 @@
 const express = require('express');
 const router = express.Router();
 const pool = require('../config/db');
+const { auth, requireRole } = require('../middlewares/auth');
+
+router.use(auth, requireRole('masoterapeuta', 'administradora', 'vendedora'));
 
 // GET /clientas -> listar todas (activas e inactivas)
 // Opcional: /clientas?activo=1 o /clientas?activo=0
