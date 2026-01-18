@@ -1,75 +1,87 @@
 const express = require('express');
+const bcrypt = require('bcryptjs');
 const router = express.Router();
 
 const pool = require('../config/db');
-const bcrypt = require('bcrypt');
 const { auth, requireRole } = require('../middlewares/auth');
 
 // =========================
 // Helpers
 // =========================
-function generateTempPassword(length = 10) {
-  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnpqrstuvwxyz23456789!@#$%';
-  let out = '';
-  for (let i = 0; i < length; i++) out += chars[Math.floor(Math.random() * chars.length)];
-  return out;
-}
-
 async function getPersonalCount() {
-  const [rows] = await pool.query('SELECT COUNT(*) AS c FROM personal');
-  return Number(rows?.[0]?.c ?? 0);
+  const [rows] = await pool.query('SELECT COUNT(*) AS total FROM personal');
+  return rows?.[0]?.total ?? 0;
 }
 
-function runMiddleware(mw, req, res) {
-  return new Promise((resolve, reject) => {
-    try {
-      mw(req, res, (err) => (err ? reject(err) : resolve()));
-    } catch (e) {
-      reject(e);
-    }
-  });
+function getBootstrapKeyFromRequest(req) {
+  // Postman header: x-bootstrap-key
+  return req.get('x-bootstrap-key');
 }
 
-/**
- * Permite crear personal:
- * - si NO hay nadie en la tabla: exige x-bootstrap-key == BOOTSTRAP_KEY
- * - si YA hay personal: exige auth + rol administradora
- */
-async function ensureCanCreatePersonal(req, res, next) {
+function isBootstrapKeyConfigured() {
+  return !!process.env.BOOTSTRAP_KEY && String(process.env.BOOTSTRAP_KEY).trim() !== '';
+}
+
+function isBootstrapKeyValid(req) {
+  const headerKey = getBootstrapKeyFromRequest(req);
+  const envKey = process.env.BOOTSTRAP_KEY;
+  return headerKey && envKey && String(headerKey).trim() === String(envKey).trim();
+}
+
+async function rolesExist(roleIds) {
+  if (!Array.isArray(roleIds) || roleIds.length === 0) return false;
+
+  const [rows] = await pool.query(
+    `SELECT COUNT(*) AS total
+     FROM rol
+     WHERE id_rol IN (?)`,
+    [roleIds]
+  );
+
+  return (rows?.[0]?.total ?? 0) === roleIds.length;
+}
+
+async function replaceRolesForPersonal(conn, id_personal, roleIds) {
+  await conn.query('DELETE FROM rol_personal WHERE id_personal = ?', [id_personal]);
+
+  if (roleIds.length > 0) {
+    const values = roleIds.map((rid) => [id_personal, rid]);
+    await conn.query('INSERT INTO rol_personal (id_personal, id_rol) VALUES ?', [values]);
+  }
+}
+
+// Middleware especial para POST /personal
+// - Si NO hay personal en la BD: permite crear con x-bootstrap-key
+// - Si YA hay personal: exige auth + administradora
+async function bootstrapOrAdmin(req, res, next) {
   try {
-    const count = await getPersonalCount();
+    const total = await getPersonalCount();
 
-    // Caso bootstrap (BD vacía)
-    if (count === 0) {
-      const expected = process.env.BOOTSTRAP_KEY;
-      const provided = req.get('x-bootstrap-key');
-
-      if (!expected) {
+    if (total === 0) {
+      if (!isBootstrapKeyConfigured()) {
         return res.status(500).json({
-          message: 'BOOTSTRAP_KEY no está configurada en el servicio',
-          error: 'Missing BOOTSTRAP_KEY',
+          message: 'BOOTSTRAP_KEY no está configurada en el servicio (Railway).',
+          error: 'Missing BOOTSTRAP_KEY'
         });
       }
 
-      if (!provided || provided !== expected) {
+      if (!isBootstrapKeyValid(req)) {
         return res.status(401).json({
-          message: 'Bootstrap key inválida o ausente',
-          error: 'Invalid bootstrap key',
+          message: 'Error validando bootstrap',
+          error: 'Invalid bootstrap key'
         });
       }
 
-      req._bootstrap = true;
+      // OK, primer usuario permitido por bootstrap
       return next();
     }
 
-    // Caso normal: requiere token + rol admin
-    await runMiddleware(auth, req, res);
-    await runMiddleware(requireRole('administradora'), req, res);
-    return next();
-  } catch (error) {
+    // Si ya existe personal => requiere token y rol admin
+    return auth(req, res, () => requireRole('administradora')(req, res, next));
+  } catch (err) {
     return res.status(500).json({
       message: 'Error validando bootstrap',
-      error: error?.message || String(error),
+      error: err?.message || String(err)
     });
   }
 }
@@ -78,57 +90,35 @@ async function ensureCanCreatePersonal(req, res, next) {
 // Rutas
 // =========================
 
-// GET /personal -> lista (activos e inactivos) con roles
+// LISTAR personal (solo admin)
 router.get('/', auth, requireRole('administradora'), async (req, res) => {
   try {
     const [rows] = await pool.query(
-      `SELECT p.id_personal, p.nombre, p.apellido, p.rut, p.direccion, p.telefono, p.email, p.activo, p.must_change_password
-       FROM personal p
-       ORDER BY p.id_personal DESC`
+      `SELECT id_personal, nombre, apellido, rut, direccion, telefono, email, activo, must_change_password
+       FROM personal
+       ORDER BY id_personal DESC`
     );
-
-    // roles por personal
-    const ids = rows.map(r => r.id_personal);
-    let rolesMap = new Map();
-    if (ids.length) {
-      const [roleRows] = await pool.query(
-        `SELECT rp.id_personal, r.id_rol, r.nombre
-         FROM rol_personal rp
-         JOIN rol r ON r.id_rol = rp.id_rol
-         WHERE rp.id_personal IN (${ids.map(() => '?').join(',')})`,
-        ids
-      );
-
-      for (const rr of roleRows) {
-        if (!rolesMap.has(rr.id_personal)) rolesMap.set(rr.id_personal, []);
-        rolesMap.get(rr.id_personal).push({ id_rol: rr.id_rol, nombre: rr.nombre });
-      }
-    }
-
-    const out = rows.map(p => ({
-      ...p,
-      roles: rolesMap.get(p.id_personal) || [],
-    }));
-
-    res.json(out);
-  } catch (error) {
-    res.status(500).json({ message: 'Error al obtener personal', error: error.message });
+    res.json(rows);
+  } catch (err) {
+    res.status(500).json({ message: 'Error al obtener personal', error: err?.message || String(err) });
   }
 });
 
-// GET /personal/:id -> detalle con roles
+// OBTENER por id (solo admin)
 router.get('/:id', auth, requireRole('administradora'), async (req, res) => {
   try {
-    const id = Number(req.params.id);
+    const { id } = req.params;
+
     const [rows] = await pool.query(
       `SELECT id_personal, nombre, apellido, rut, direccion, telefono, email, activo, must_change_password
        FROM personal
        WHERE id_personal = ?`,
       [id]
     );
-    if (!rows.length) return res.status(404).json({ message: 'Personal no encontrado' });
 
-    const [roleRows] = await pool.query(
+    if (rows.length === 0) return res.status(404).json({ message: 'Personal no encontrado' });
+
+    const [roles] = await pool.query(
       `SELECT r.id_rol, r.nombre
        FROM rol_personal rp
        JOIN rol r ON r.id_rol = rp.id_rol
@@ -136,195 +126,165 @@ router.get('/:id', auth, requireRole('administradora'), async (req, res) => {
       [id]
     );
 
-    res.json({ ...rows[0], roles: roleRows });
-  } catch (error) {
-    res.status(500).json({ message: 'Error al obtener personal', error: error.message });
+    res.json({ ...rows[0], roles });
+  } catch (err) {
+    res.status(500).json({ message: 'Error al obtener personal', error: err?.message || String(err) });
   }
 });
 
-// POST /personal -> crea personal (bootstrap o admin)
-router.post('/', ensureCanCreatePersonal, async (req, res) => {
+// CREAR personal
+// - Primer personal: header x-bootstrap-key válido
+// - Luego: admin con token
+router.post('/', bootstrapOrAdmin, async (req, res) => {
   const conn = await pool.getConnection();
   try {
     const { nombre, apellido, rut, direccion, telefono, email, roles } = req.body;
 
-    if (!nombre || !apellido || !rut || !email || !Array.isArray(roles) || roles.length === 0) {
-      return res.status(400).json({
-        message: 'Campos obligatorios: nombre, apellido, rut, email, roles[]',
-      });
+    if (!nombre || !apellido || !rut || !direccion || !telefono || !email) {
+      return res.status(400).json({ message: 'Faltan campos obligatorios.' });
     }
 
-    // validar roles existen
-    const roleIds = roles.map(n => Number(n)).filter(n => Number.isFinite(n));
-    if (!roleIds.length) {
-      return res.status(400).json({ message: 'roles debe ser un arreglo de id_rol (números)' });
+    const roleIds = Array.isArray(roles) ? roles.map(Number) : [];
+    if (roleIds.length === 0) {
+      return res.status(400).json({ message: 'Debes enviar roles (ids) en un arreglo.' });
     }
 
-    const [validRoles] = await pool.query(
-      `SELECT id_rol FROM rol WHERE id_rol IN (${roleIds.map(() => '?').join(',')})`,
-      roleIds
-    );
-    if (validRoles.length !== roleIds.length) {
-      return res.status(400).json({ message: 'Uno o más roles no existen' });
-    }
+    const okRoles = await rolesExist(roleIds);
+    if (!okRoles) return res.status(400).json({ message: 'Uno o más roles no existen.' });
 
-    // email único
-    const [exists] = await pool.query(`SELECT id_personal FROM personal WHERE email = ? LIMIT 1`, [
-      String(email).trim(),
-    ]);
-    if (exists.length) return res.status(409).json({ message: 'Ya existe un usuario con ese email' });
-
-    // password temporal
-    const tempPassword = generateTempPassword(10);
-    const passwordHash = await bcrypt.hash(tempPassword, 10);
+    // Password temporal
+    const tempPassword = `Temp${rut.replace(/[^0-9kK]/g, '').slice(-4) || '0000'}!`;
+    const hashed = await bcrypt.hash(tempPassword, 10);
 
     await conn.beginTransaction();
 
+    // Evitar duplicados por email/rut
+    const [dup] = await conn.query(
+      `SELECT id_personal FROM personal WHERE email = ? OR rut = ? LIMIT 1`,
+      [email, rut]
+    );
+    if (dup.length > 0) {
+      await conn.rollback();
+      return res.status(409).json({ message: 'Ya existe un personal con ese email o rut.' });
+    }
+
     const [result] = await conn.query(
-      `INSERT INTO personal (nombre, apellido, rut, direccion, telefono, email, activo, password_hash, must_change_password)
+      `INSERT INTO personal (nombre, apellido, rut, direccion, telefono, email, activo, password, must_change_password)
        VALUES (?, ?, ?, ?, ?, ?, 1, ?, 1)`,
-      [
-        String(nombre).trim(),
-        String(apellido).trim(),
-        String(rut).trim(),
-        direccion ? String(direccion).trim() : null,
-        telefono ? String(telefono).trim() : null,
-        String(email).trim(),
-        passwordHash,
-      ]
+      [nombre, apellido, rut, direccion, telefono, email, hashed]
     );
 
     const id_personal = result.insertId;
 
-    // insertar roles
-    for (const id_rol of roleIds) {
-      await conn.query(`INSERT INTO rol_personal (id_personal, id_rol) VALUES (?, ?)`, [
-        id_personal,
-        id_rol,
-      ]);
-    }
+    await replaceRolesForPersonal(conn, id_personal, roleIds);
 
     await conn.commit();
 
     res.status(201).json({
-      message: req._bootstrap ? 'Usuario bootstrap creado' : 'Personal creado',
+      message: 'Personal creado correctamente',
       id_personal,
-      temp_password: tempPassword,
-      must_change_password: 1,
+      tempPassword,
+      must_change_password: 1
     });
-  } catch (error) {
-    try {
-      await conn.rollback();
-    } catch (_) {}
-    res.status(500).json({ message: 'Error al crear personal', error: error?.message || String(error) });
+  } catch (err) {
+    try { await conn.rollback(); } catch (_) {}
+    res.status(500).json({ message: 'Error al crear personal', error: err?.message || String(err) });
   } finally {
     conn.release();
   }
 });
 
-// PUT /personal/:id -> actualiza datos (NO roles)
+// ACTUALIZAR datos personales (solo admin)
 router.put('/:id', auth, requireRole('administradora'), async (req, res) => {
   try {
-    const id = Number(req.params.id);
-    const { nombre, apellido, rut, direccion, telefono, email, activo } = req.body;
+    const { id } = req.params;
+    const { nombre, apellido, rut, direccion, telefono, email } = req.body;
 
-    const [exists] = await pool.query(`SELECT id_personal FROM personal WHERE id_personal = ?`, [id]);
-    if (!exists.length) return res.status(404).json({ message: 'Personal no encontrado' });
-
-    // si cambia email, validar único
-    if (email) {
-      const [dup] = await pool.query(
-        `SELECT id_personal FROM personal WHERE email = ? AND id_personal <> ? LIMIT 1`,
-        [String(email).trim(), id]
-      );
-      if (dup.length) return res.status(409).json({ message: 'Ya existe otro usuario con ese email' });
+    if (!nombre || !apellido || !rut || !direccion || !telefono || !email) {
+      return res.status(400).json({ message: 'Faltan campos obligatorios.' });
     }
 
-    await pool.query(
+    const [result] = await pool.query(
       `UPDATE personal
-       SET nombre = COALESCE(?, nombre),
-           apellido = COALESCE(?, apellido),
-           rut = COALESCE(?, rut),
-           direccion = COALESCE(?, direccion),
-           telefono = COALESCE(?, telefono),
-           email = COALESCE(?, email),
-           activo = COALESCE(?, activo)
-       WHERE id_personal = ?`,
-      [
-        nombre !== undefined ? String(nombre).trim() : null,
-        apellido !== undefined ? String(apellido).trim() : null,
-        rut !== undefined ? String(rut).trim() : null,
-        direccion !== undefined ? (direccion ? String(direccion).trim() : null) : null,
-        telefono !== undefined ? (telefono ? String(telefono).trim() : null) : null,
-        email !== undefined ? String(email).trim() : null,
-        activo !== undefined ? Number(activo) : null,
-        id,
-      ]
+       SET nombre=?, apellido=?, rut=?, direccion=?, telefono=?, email=?
+       WHERE id_personal=?`,
+      [nombre, apellido, rut, direccion, telefono, email, id]
     );
 
-    res.json({ message: 'Personal actualizado' });
-  } catch (error) {
-    res.status(500).json({ message: 'Error al actualizar personal', error: error.message });
+    if (result.affectedRows === 0) return res.status(404).json({ message: 'Personal no encontrado' });
+
+    res.json({ message: 'Personal actualizado correctamente' });
+  } catch (err) {
+    res.status(500).json({ message: 'Error al actualizar personal', error: err?.message || String(err) });
   }
 });
 
-// PUT /personal/:id/roles -> reemplaza roles
+// ACTUALIZAR roles (solo admin)
 router.put('/:id/roles', auth, requireRole('administradora'), async (req, res) => {
   const conn = await pool.getConnection();
   try {
-    const id = Number(req.params.id);
+    const { id } = req.params;
     const { roles } = req.body;
 
-    if (!Array.isArray(roles) || roles.length === 0) {
-      return res.status(400).json({ message: 'roles[] es obligatorio' });
-    }
+    const roleIds = Array.isArray(roles) ? roles.map(Number) : [];
+    if (roleIds.length === 0) return res.status(400).json({ message: 'Debes enviar roles (ids) en un arreglo.' });
 
-    const roleIds = roles.map(n => Number(n)).filter(n => Number.isFinite(n));
-    const [validRoles] = await pool.query(
-      `SELECT id_rol FROM rol WHERE id_rol IN (${roleIds.map(() => '?').join(',')})`,
-      roleIds
-    );
-    if (validRoles.length !== roleIds.length) {
-      return res.status(400).json({ message: 'Uno o más roles no existen' });
-    }
+    const okRoles = await rolesExist(roleIds);
+    if (!okRoles) return res.status(400).json({ message: 'Uno o más roles no existen.' });
 
     await conn.beginTransaction();
-    await conn.query(`DELETE FROM rol_personal WHERE id_personal = ?`, [id]);
-    for (const id_rol of roleIds) {
-      await conn.query(`INSERT INTO rol_personal (id_personal, id_rol) VALUES (?, ?)`, [id, id_rol]);
-    }
-    await conn.commit();
 
-    res.json({ message: 'Roles actualizados' });
-  } catch (error) {
-    try {
+    const [exists] = await conn.query(`SELECT id_personal FROM personal WHERE id_personal=?`, [id]);
+    if (exists.length === 0) {
       await conn.rollback();
-    } catch (_) {}
-    res.status(500).json({ message: 'Error al actualizar roles', error: error.message });
+      return res.status(404).json({ message: 'Personal no encontrado' });
+    }
+
+    await replaceRolesForPersonal(conn, id, roleIds);
+
+    await conn.commit();
+    res.json({ message: 'Roles actualizados correctamente' });
+  } catch (err) {
+    try { await conn.rollback(); } catch (_) {}
+    res.status(500).json({ message: 'Error al actualizar roles', error: err?.message || String(err) });
   } finally {
     conn.release();
   }
 });
 
-// DELETE /personal/:id -> desactiva (soft delete)
+// INACTIVAR (soft delete) (solo admin)
 router.delete('/:id', auth, requireRole('administradora'), async (req, res) => {
   try {
-    const id = Number(req.params.id);
-    await pool.query(`UPDATE personal SET activo = 0 WHERE id_personal = ?`, [id]);
-    res.json({ message: 'Personal desactivado' });
-  } catch (error) {
-    res.status(500).json({ message: 'Error al desactivar personal', error: error.message });
+    const { id } = req.params;
+
+    const [result] = await pool.query(
+      `UPDATE personal SET activo = 0 WHERE id_personal = ?`,
+      [id]
+    );
+
+    if (result.affectedRows === 0) return res.status(404).json({ message: 'Personal no encontrado' });
+
+    res.json({ message: 'Personal inactivado correctamente' });
+  } catch (err) {
+    res.status(500).json({ message: 'Error al inactivar personal', error: err?.message || String(err) });
   }
 });
 
-// PUT /personal/:id/reactivar -> reactiva
-router.put('/:id/reactivar', auth, requireRole('administradora'), async (req, res) => {
+// REACTIVAR (solo admin)
+router.put('/:id/activar', auth, requireRole('administradora'), async (req, res) => {
   try {
-    const id = Number(req.params.id);
-    await pool.query(`UPDATE personal SET activo = 1 WHERE id_personal = ?`, [id]);
-    res.json({ message: 'Personal reactivado' });
-  } catch (error) {
-    res.status(500).json({ message: 'Error al reactivar personal', error: error.message });
+    const { id } = req.params;
+
+    const [result] = await pool.query(
+      `UPDATE personal SET activo = 1 WHERE id_personal = ?`,
+      [id]
+    );
+
+    if (result.affectedRows === 0) return res.status(404).json({ message: 'Personal no encontrado' });
+
+    res.json({ message: 'Personal reactivado correctamente' });
+  } catch (err) {
+    res.status(500).json({ message: 'Error al reactivar personal', error: err?.message || String(err) });
   }
 });
 

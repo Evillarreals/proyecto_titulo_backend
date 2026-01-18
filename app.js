@@ -8,6 +8,10 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+app.get("/", (req, res) => {
+  res.json({ ok: true, service: "backend", status: "running" });
+});
+
 // Rutas
 const healthRoutes = require('./routes/health');
 app.use('/health', healthRoutes);
@@ -42,9 +46,17 @@ app.use('/personal', personalRoutes);
 const authRoutes = require('./routes/auth');
 app.use('/auth', authRoutes);
 
-// Puerto
-const PORT = process.env.PORT || 3000;
+app.use((req, res) => {
+  res.status(404).json({ message: "Ruta no encontrada" });
+});
 
+// Error handler
+app.use((err, req, res, next) => {
+  console.error("Unhandled error:", err);
+  res.status(500).json({ message: "Error interno", error: err?.message || String(err) });
+});
+
+const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`Servidor backend ejecutándose en http://localhost:${PORT}`);
 });
