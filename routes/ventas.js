@@ -6,7 +6,6 @@ const { auth, requireRole } = require('../middlewares/auth');
 router.use(auth);
 router.use(requireRole('vendedora', 'administradora'));
 
-// GET /ventas -> listar ventas
 router.get('/', async (req, res) => {
   try {
     const [rows] = await pool.query(`
@@ -26,13 +25,11 @@ router.get('/', async (req, res) => {
   }
 });
 
-// GET /ventas/:id -> detalle completo (cabecera + items + pagos + resumenPago)
 router.get('/:id', async (req, res) => {
   const conn = await pool.getConnection();
   try {
     const { id } = req.params;
 
-    // 1) Cabecera
     const [ventaRows] = await conn.query(
       `
       SELECT 
@@ -54,7 +51,6 @@ router.get('/:id', async (req, res) => {
 
     const venta = ventaRows[0];
 
-    // 2) Items (detalle)
     const [items] = await conn.query(
       `
       SELECT 
@@ -68,7 +64,6 @@ router.get('/:id', async (req, res) => {
       [id]
     );
 
-    // 3) Pagos
     const [pagos] = await conn.query(
       `
       SELECT id_pago, id_venta, monto, medio_pago, fecha
@@ -79,7 +74,6 @@ router.get('/:id', async (req, res) => {
       [id]
     );
 
-    // 4) Resumen pagos
     const totalVenta = Number(venta.total);
     const totalPagado = pagos.reduce((acc, p) => acc + Number(p.monto), 0);
     const saldo = Math.max(totalVenta - totalPagado, 0);
@@ -102,7 +96,6 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-// POST /ventas -> registrar venta
 router.post('/', async (req, res) => {
   const conn = await pool.getConnection();
   try {
@@ -112,8 +105,6 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ message: 'Campos obligatorios: id_clienta, items[]' });
     }
 
-    // ✅ Ahora: vendedora y administradora pueden elegir id_personal.
-    // Fallback: si no envían id_personal, se usa el del token.
     const id_personal = id_personal_body != null && id_personal_body !== ''
       ? Number(id_personal_body)
       : Number(req.user?.id_personal);
@@ -124,7 +115,6 @@ router.post('/', async (req, res) => {
 
     await conn.beginTransaction();
 
-    // ✅ Validar que la persona exista, esté activa y tenga rol vendedora
     const [vendedorRows] = await conn.query(
       `
       SELECT p.id_personal
@@ -144,7 +134,6 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ message: 'La persona seleccionada no es una vendedora activa' });
     }
 
-    // 1) Insert cabecera venta (total provisional 0)
     const [ventaResult] = await conn.query(
       `INSERT INTO venta (id_clienta, id_personal, total, estado_pago)
        VALUES (?, ?, 0, 'pendiente')`,
@@ -153,7 +142,6 @@ router.post('/', async (req, res) => {
 
     const id_venta = ventaResult.insertId;
 
-    // 2) Insert detalle + calcular total + warnings stock minimo
     let total = 0;
     const warnings = [];
 
@@ -170,7 +158,6 @@ router.post('/', async (req, res) => {
         return res.status(400).json({ message: 'cantidad > 0 y precio_unitario >= 0' });
       }
 
-      // bloquear fila producto
       const [prodRows] = await conn.query(
         `SELECT id_producto, nombre, stock, stock_minimo
          FROM producto
@@ -193,7 +180,6 @@ router.post('/', async (req, res) => {
         return res.status(400).json({ message: `Stock insuficiente para producto ${id_producto}` });
       }
 
-      // descontar stock
       await conn.query(
         `UPDATE producto SET stock = stock - ? WHERE id_producto = ?`,
         [cant, id_producto]
@@ -201,7 +187,6 @@ router.post('/', async (req, res) => {
 
       const stockNuevo = stockActual - cant;
 
-      // warning si queda en/bajo minimo
       if (!Number.isNaN(stockMinimo) && stockNuevo <= stockMinimo) {
         warnings.push({
           id_producto: Number(id_producto),
@@ -220,7 +205,6 @@ router.post('/', async (req, res) => {
       total += cant * Number(precio_unitario);
     }
 
-    // 3) Actualizar total
     await conn.query(
       `UPDATE venta SET total = ? WHERE id_venta = ?`,
       [total, id_venta]
