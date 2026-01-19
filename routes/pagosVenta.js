@@ -6,7 +6,6 @@ const { auth, requireRole } = require('../middlewares/auth');
 router.use(auth);
 router.use(requireRole('vendedora', 'administradora'));
 
-// POST /pagos-venta
 router.post('/', async (req, res) => {
   const conn = await pool.getConnection();
   try {
@@ -70,7 +69,6 @@ router.post('/', async (req, res) => {
   }
 });
 
-// GET /pagos-venta/:id_venta -> listar pagos de una venta
 router.get('/:id_venta', async (req, res) => {
   try {
     const { id_venta } = req.params;

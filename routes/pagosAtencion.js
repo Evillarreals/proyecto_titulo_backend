@@ -6,7 +6,6 @@ const { auth, requireRole } = require('../middlewares/auth');
 router.use(auth);
 router.use(requireRole('masoterapeuta', 'administradora'));
 
-// POST /pagos-atencion
 router.post('/', async (req, res) => {
   const conn = await pool.getConnection();
   try {
@@ -70,7 +69,6 @@ router.post('/', async (req, res) => {
   }
 });
 
-// GET /pagos-atencion/:id_atencion
 router.get('/:id_atencion', async (req, res) => {
   try {
     const { id_atencion } = req.params;

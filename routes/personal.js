@@ -281,7 +281,6 @@ router.put("/:id/roles", async (req, res) => {
   }
 });
 
-// PUT /personal/:id/activar -> reactivar
 router.put("/:id/activar", async (req, res) => {
   try {
     const { id } = req.params;
@@ -302,7 +301,6 @@ router.put("/:id/activar", async (req, res) => {
   }
 });
 
-// DELETE /personal/:id -> desactivar (soft delete)
 router.delete("/:id", async (req, res) => {
   try {
     const { id } = req.params;

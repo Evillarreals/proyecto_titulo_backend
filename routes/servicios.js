@@ -6,7 +6,6 @@ const { auth, requireRole } = require('../middlewares/auth');
 router.use(auth);
 router.use(requireRole('masoterapeuta', 'administradora'));
 
-// GET /servicios -> listar ACTIVOS + INACTIVOS (frontend filtra)
 router.get('/', async (req, res) => {
   try {
     const [rows] = await pool.query(
@@ -20,7 +19,6 @@ router.get('/', async (req, res) => {
   }
 });
 
-// GET /servicios/todos -> alias (compatibilidad)
 router.get('/todos', async (req, res) => {
   try {
     const [rows] = await pool.query(
@@ -34,7 +32,6 @@ router.get('/todos', async (req, res) => {
   }
 });
 
-// GET /servicios/:id -> uno por id (sirve para editar)
 router.get('/:id', async (req, res) => {
   try {
     const { id } = req.params;
@@ -52,7 +49,6 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-// POST /servicios -> crear servicio
 router.post('/', async (req, res) => {
   try {
     const { nombre, duracion_min, precio_base } = req.body;
@@ -78,7 +74,6 @@ router.post('/', async (req, res) => {
   }
 });
 
-// PUT /servicios/:id -> editar servicio (nombre, duracion, precio)
 router.put('/:id', async (req, res) => {
   try {
     const { id } = req.params;
@@ -112,7 +107,6 @@ router.put('/:id', async (req, res) => {
   }
 });
 
-// DELETE /servicios/:id -> desactivar (borrado lógico)
 router.delete('/:id', async (req, res) => {
   try {
     const { id } = req.params;
@@ -133,7 +127,6 @@ router.delete('/:id', async (req, res) => {
   }
 });
 
-// PUT /servicios/:id/activar -> reactivar
 router.put('/:id/activar', async (req, res) => {
   try {
     const { id } = req.params;

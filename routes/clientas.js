@@ -5,8 +5,6 @@ const { auth, requireRole } = require('../middlewares/auth');
 
 router.use(auth, requireRole('masoterapeuta', 'administradora', 'vendedora'));
 
-// GET /clientas -> listar todas (activas e inactivas)
-// Opcional: /clientas?activo=1 o /clientas?activo=0
 router.get('/', async (req, res) => {
   try {
     const { activo } = req.query;
@@ -32,7 +30,6 @@ router.get('/', async (req, res) => {
   }
 });
 
-// GET /clientas/:id -> obtener una por id
 router.get('/:id', async (req, res) => {
   try {
     const { id } = req.params;
@@ -45,7 +42,6 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-// POST /clientas -> crear clienta (activo=1 por defecto)
 router.post('/', async (req, res) => {
   try {
     const { nombre, apellido, telefono, email, direccion } = req.body;
@@ -68,7 +64,6 @@ router.post('/', async (req, res) => {
   }
 });
 
-// PUT /clientas/:id -> actualizar datos (no toca "activo")
 router.put('/:id', async (req, res) => {
   try {
     const { id } = req.params;
@@ -95,7 +90,6 @@ router.put('/:id', async (req, res) => {
   }
 });
 
-// PUT /clientas/:id/activo -> activar/desactivar (recomendado para tu toggle)
 router.put('/:id/activo', async (req, res) => {
   try {
     const { id } = req.params;

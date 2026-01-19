@@ -1,4 +1,3 @@
-// backend/routes/roles.js
 const express = require('express');
 const router = express.Router();
 const pool = require('../config/db');
@@ -7,7 +6,6 @@ const { auth, requireRole } = require('../middlewares/auth');
 router.use(auth);
 router.use(requireRole('administradora'));
 
-// GET /roles -> listar roles
 router.get('/', async (req, res) => {
   try {
     const [rows] = await pool.query('SELECT * FROM rol ORDER BY id_rol ASC');
@@ -17,7 +15,6 @@ router.get('/', async (req, res) => {
   }
 });
 
-// POST /roles -> crear rol
 router.post('/', async (req, res) => {
   try {
     const { nombre } = req.body;
@@ -33,7 +30,6 @@ router.post('/', async (req, res) => {
   }
 });
 
-// PUT /roles/:id -> editar rol
 router.put('/:id', async (req, res) => {
   try {
     const { id } = req.params;

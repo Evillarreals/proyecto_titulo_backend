@@ -10,14 +10,13 @@ function auth(req, res, next) {
 
   try {
     const payload = jwt.verify(token, process.env.JWT_SECRET);
-    req.user = payload; // { id_personal, email, roles }
+    req.user = payload;
     next();
   } catch (err) {
     return res.status(401).json({ message: 'Token inválido o expirado' });
   }
 }
 
-// roles: requireRole('administradora') o requireRole('vendedora','administradora')
 function requireRole(...allowed) {
   return (req, res, next) => {
     const roles = req.user?.roles || [];
@@ -28,3 +27,4 @@ function requireRole(...allowed) {
 }
 
 module.exports = { auth, requireRole };
+

@@ -6,7 +6,6 @@ const { auth, requireRole } = require('../middlewares/auth');
 router.use(auth);
 router.use(requireRole('vendedora', 'administradora'));
 
-// ✅ GET /productos -> listar ACTIVOS e INACTIVOS (un solo endpoint)
 router.get('/', async (req, res) => {
   try {
     const [rows] = await pool.query(
@@ -20,7 +19,6 @@ router.get('/', async (req, res) => {
   }
 });
 
-// GET /productos/stock-bajo -> alerta stock mínimo (solo activos)
 router.get('/stock-bajo', async (req, res) => {
   try {
     const [rows] = await pool.query(
@@ -35,7 +33,6 @@ router.get('/stock-bajo', async (req, res) => {
   }
 });
 
-// ✅ PUT /productos/:id/sumar-stock -> suma stock al stock actual (sin editar todo)
 router.put('/:id/sumar-stock', async (req, res) => {
   try {
     const { id } = req.params;
@@ -47,7 +44,6 @@ router.put('/:id/sumar-stock', async (req, res) => {
       return res.status(400).json({ message: 'cantidad debe ser un entero mayor a 0' });
     }
 
-    // Actualizar
     const [result] = await pool.query(
       `UPDATE producto
        SET stock = stock + ?
@@ -59,7 +55,6 @@ router.put('/:id/sumar-stock', async (req, res) => {
       return res.status(404).json({ message: 'Producto no encontrado' });
     }
 
-    // Devolver stock actualizado (útil para el front)
     const [rows] = await pool.query(
       `SELECT id_producto, stock FROM producto WHERE id_producto = ?`,
       [id]
@@ -75,7 +70,6 @@ router.put('/:id/sumar-stock', async (req, res) => {
   }
 });
 
-// GET /productos/:id -> uno por id (sirve para editar)
 router.get('/:id', async (req, res) => {
   try {
     const { id } = req.params;
@@ -94,7 +88,6 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-// POST /productos -> crear producto
 router.post('/', async (req, res) => {
   try {
     const { nombre, marca, precio, stock, stock_minimo } = req.body;
@@ -121,7 +114,6 @@ router.post('/', async (req, res) => {
   }
 });
 
-// PUT /productos/:id -> editar producto (NO permite cambiar "activo" aquí)
 router.put('/:id', async (req, res) => {
   try {
     const { id } = req.params;
@@ -157,7 +149,6 @@ router.put('/:id', async (req, res) => {
   }
 });
 
-// DELETE /productos/:id -> desactivar (borrado lógico)
 router.delete('/:id', async (req, res) => {
   try {
     const { id } = req.params;
@@ -178,7 +169,6 @@ router.delete('/:id', async (req, res) => {
   }
 });
 
-// PUT /productos/:id/activar -> reactivar
 router.put('/:id/activar', async (req, res) => {
   try {
     const { id } = req.params;

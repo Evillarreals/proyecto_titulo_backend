@@ -4,7 +4,6 @@ const pool = require("../config/db");
 const bcrypt = require("bcrypt");
 const jwt = require("jsonwebtoken");
 
-// Middleware simple JWT (reutilizable acá)
 function authJwt(req, res, next) {
   const header = req.headers.authorization || "";
   const token = header.startsWith("Bearer ") ? header.slice(7) : null;
@@ -13,14 +12,13 @@ function authJwt(req, res, next) {
 
   try {
     const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    req.user = decoded; // { id_personal, email, roles }
+    req.user = decoded;
     return next();
   } catch {
     return res.status(401).json({ message: "Token inválido o expirado" });
   }
 }
 
-// POST /auth/login
 router.post("/login", async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -78,8 +76,6 @@ router.post("/login", async (req, res) => {
   }
 });
 
-// POST /auth/change-password
-// Body: { currentPassword, newPassword }
 router.post("/change-password", authJwt, async (req, res) => {
   try {
     const { currentPassword, newPassword } = req.body;

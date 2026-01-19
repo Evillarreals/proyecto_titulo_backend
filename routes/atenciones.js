@@ -4,7 +4,6 @@ const pool = require('../config/db');
 
 const { auth, requireRole } = require('../middlewares/auth');
 
-// Atenciones: masoterapeuta + administradora
 router.use(auth, requireRole('masoterapeuta', 'administradora'));
 
 const minToMs = (min) => Number(min) * 60 * 1000;
@@ -21,12 +20,7 @@ function toMysqlDatetimeLocal(date) {
   );
 }
 
-/**
- * Valida que el personal:
- * - exista
- * - esté activo
- * - tenga el rol requerido (ej: 'masoterapeuta')
- */
+
 async function validatePersonalActiveWithRole(conn, id_personal, roleName) {
   const [rows] = await conn.query(
     `
@@ -46,21 +40,14 @@ async function validatePersonalActiveWithRole(conn, id_personal, roleName) {
   return { ok: true };
 }
 
-/**
- * Normaliza fecha_inicio:
- * - soporta "YYYY-MM-DD HH:mm:ss"
- * - soporta ISO
- */
 function parseInicio(fecha_inicio) {
   const s = String(fecha_inicio).trim();
-  const normalized = s.includes('T') ? s : s.replace(' ', 'T'); // "YYYY-MM-DD HH:mm:ss" -> "YYYY-MM-DDTHH:mm:ss"
+  const normalized = s.includes('T') ? s : s.replace(' ', 'T');
   const dt = new Date(normalized);
   return isNaN(dt.getTime()) ? null : dt;
 }
 
-/**
- * Calcula duración total (min) desde tabla servicio
- */
+
 async function fetchServiciosInfo(conn, servicios) {
   const ids = servicios.map((s) => s.id_servicio);
 
@@ -84,17 +71,12 @@ async function fetchServiciosInfo(conn, servicios) {
   return { ok: true, totalDuracion };
 }
 
-/**
- * Regla de agenda:
- * - Bloqueo real = [fecha_inicio - traslado_min, fecha_fin]
- * - fecha_fin = fecha_inicio + duracion_total (NO suma traslado)
- */
 async function checkConflicts(conn, { id_personal, bloque_inicio, bloque_fin, excludeIdAtencion = null }) {
   const params = [id_personal, bloque_fin, bloque_inicio];
   let extra = '';
   if (excludeIdAtencion != null) {
     extra = 'AND a.id_atencion <> ?';
-    params.splice(1, 0, excludeIdAtencion); // [id_personal, excludeId, bloque_fin, bloque_inicio]
+    params.splice(1, 0, excludeIdAtencion);
   }
 
   const [rows] = await conn.query(
@@ -118,7 +100,6 @@ async function checkConflicts(conn, { id_personal, bloque_inicio, bloque_fin, ex
   return { ok: true };
 }
 
-// GET /atenciones (lista)
 router.get('/', async (req, res) => {
   const conn = await pool.getConnection();
   try {
@@ -154,7 +135,6 @@ router.get('/', async (req, res) => {
   }
 });
 
-// GET /atenciones/:id (detalle)
 router.get('/:id', async (req, res) => {
   const conn = await pool.getConnection();
   try {
@@ -197,7 +177,6 @@ router.get('/:id', async (req, res) => {
       [id]
     );
 
-    // ✅ FIX: PK real en pago_atencion es id_pago (no id_pago_atencion)
     const [pagos] = await conn.query(
       `
       SELECT id_pago, fecha, monto, medio_pago
@@ -225,7 +204,6 @@ router.get('/:id', async (req, res) => {
   }
 });
 
-// POST /atenciones (crear)
 router.post('/', async (req, res) => {
   const conn = await pool.getConnection();
   try {
@@ -235,14 +213,12 @@ router.post('/', async (req, res) => {
       return res.status(400).json({ message: 'Campos obligatorios: id_clienta, fecha_inicio, servicios[]' });
     }
 
-    // si no mandan personal, usar el del usuario logueado
     if (!id_personal) id_personal = req.user?.id_personal;
 
     if (!id_personal) {
       return res.status(400).json({ message: 'Campos obligatorios: id_personal' });
     }
 
-    // validar personal activo + rol masoterapeuta
     const okPers = await validatePersonalActiveWithRole(conn, id_personal, 'masoterapeuta');
     if (!okPers.ok) return res.status(400).json({ message: okPers.reason });
 
@@ -252,25 +228,20 @@ router.post('/', async (req, res) => {
     const inicioDate = parseInicio(fecha_inicio);
     if (!inicioDate) return res.status(400).json({ message: 'fecha_inicio inválida. Usa "YYYY-MM-DD HH:mm:ss"' });
 
-    // servicios + duración total
     const infoSrv = await fetchServiciosInfo(conn, servicios);
     if (!infoSrv.ok) return res.status(infoSrv.status).json({ message: infoSrv.message });
 
     const totalDuracion = infoSrv.totalDuracion;
 
-    // fecha_fin = inicio + duracion (NO suma traslado)
     const finDate = new Date(inicioDate.getTime() + minToMs(totalDuracion));
     const fecha_fin = toMysqlDatetimeLocal(finDate);
 
-    // Bloqueo real
     const bloque_inicio = toMysqlDatetimeLocal(new Date(inicioDate.getTime() - minToMs(traslado)));
     const bloque_fin = fecha_fin;
 
-    // validar conflicto por masoterapeuta
     const conf = await checkConflicts(conn, { id_personal, bloque_inicio, bloque_fin });
     if (!conf.ok) return res.status(conf.status).json({ message: conf.message, conflicto: conf.conflicto });
 
-    // total (se basa en precio_aplicado)
     const total = servicios.reduce((acc, s) => acc + Number(s.precio_aplicado || 0), 0);
     if (total <= 0) return res.status(400).json({ message: 'El total debe ser mayor a 0' });
 
@@ -317,7 +288,6 @@ router.post('/', async (req, res) => {
   }
 });
 
-// PUT /atenciones/:id (editar completa)
 router.put('/:id', async (req, res) => {
   const conn = await pool.getConnection();
   try {
@@ -405,7 +375,6 @@ router.put('/:id', async (req, res) => {
   }
 });
 
-// PATCH /atenciones/:id/estado (cambiar estado_atencion)
 router.patch('/:id/estado', async (req, res) => {
   const conn = await pool.getConnection();
   try {
