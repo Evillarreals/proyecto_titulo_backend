@@ -21,6 +21,32 @@ function toMysqlDatetimeLocal(date) {
 }
 
 
+function toIsoLocal(value) {
+  if (!value) return value;
+
+  if (value instanceof Date) {
+    const d = value;
+    const pad = (n) => String(n).padStart(2, '0');
+    return (
+      d.getFullYear() +
+      '-' + pad(d.getMonth() + 1) +
+      '-' + pad(d.getDate()) +
+      'T' + pad(d.getHours()) +
+      ':' + pad(d.getMinutes()) +
+      ':' + pad(d.getSeconds())
+    );
+  }
+
+  if (typeof value === 'string') {
+    const s = value.trim();
+    if (!s) return s;
+    if (s.includes('T')) return s;
+    return s.replace(' ', 'T');
+  }
+
+  return value;
+}
+
 async function validatePersonalActiveWithRole(conn, id_personal, roleName) {
   const [rows] = await conn.query(
     `
@@ -46,7 +72,6 @@ function parseInicio(fecha_inicio) {
   const dt = new Date(normalized);
   return isNaN(dt.getTime()) ? null : dt;
 }
-
 
 async function fetchServiciosInfo(conn, servicios) {
   const ids = servicios.map((s) => s.id_servicio);
@@ -127,6 +152,12 @@ router.get('/', async (req, res) => {
       ORDER BY a.fecha_inicio ASC
       `
     );
+
+    rows.forEach((r) => {
+      r.fecha_inicio = toIsoLocal(r.fecha_inicio);
+      r.fecha_fin = toIsoLocal(r.fecha_fin);
+    });
+
     res.json(rows);
   } catch (e) {
     res.status(500).json({ message: 'Error al listar atenciones', error: e.message });
@@ -186,6 +217,12 @@ router.get('/:id', async (req, res) => {
       `,
       [id]
     );
+
+    atRows[0].fecha_inicio = toIsoLocal(atRows[0].fecha_inicio);
+    atRows[0].fecha_fin = toIsoLocal(atRows[0].fecha_fin);
+    pagos.forEach((p) => {
+      p.fecha = toIsoLocal(p.fecha);
+    });
 
     const totalAtencion = Number(atRows[0].total || 0);
     const totalPagado = pagos.reduce((acc, p) => acc + Number(p.monto || 0), 0);
